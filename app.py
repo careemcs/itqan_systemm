@@ -4,6 +4,7 @@ import pymongo
 import plotly.express as px
 from datetime import datetime
 import time
+import streamlit.components.v1 as components
 
 # --- إعداد الصفحة ---
 st.set_page_config(page_title="ITQAN Cloud", layout="wide", page_icon="☁️")
@@ -15,6 +16,15 @@ def init_connection():
 
 client = init_connection()
 db = client.itqan_db
+
+# --- كود تشغيل الصوت (JavaScript) ---
+def play_sound():
+    sound_code = """
+    <audio autoplay>
+    <source src="https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3" type="audio/mpeg">
+    </audio>
+    """
+    components.html(sound_code, height=0, width=0)
 
 # --- دوال التعامل مع الداتا ---
 def get_user(username, password):
@@ -65,53 +75,100 @@ if user:
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
-    if st.sidebar.button("تسجيل خروج"):
+    if st.sidebar.button("تسجيل خروج", type="primary"):
         del st.session_state['user']
         st.rerun()
 
     # ---------------------------------------------------------
-    # السيناريو الأول: الأدمن (تحكم كامل + تحليلات + بدون تحديث مزعج)
+    # السيناريو الأول: الأدمن (تحكم + طلبات + تحليلات مفصلة)
     # ---------------------------------------------------------
     if user['role'] == "Admin":
         st.title("📊 لوحة القيادة (Admin Dashboard)")
         
         # تابات الأدمن
-        tabs = st.tabs(["📈 التحليلات", "👥 الموظفين", "👀 مراقبة الطلبات"])
+        admin_tabs = st.tabs(["📈 التحليلات", "📝 تقديم طلب", "👥 الموظفين", "👀 مراقبة الطلبات"])
         
-        # 1. التحليلات (Dashboard)
-        with tabs[0]:
+        # 1. التحليلات (مفصلة)
+        with admin_tabs[0]:
             data = list(db.tickets.find())
             if data:
                 df = pd.DataFrame(data)
                 
-                # KPIs
+                # KPIs عامة
                 c1, c2, c3 = st.columns(3)
-                c1.metric("إجمالي الطلبات", len(df))
+                c1.metric("إجمالي التذاكر", len(df))
                 c2.metric("طلبات اليوم", len(df[df['date_only'] == datetime.now().strftime("%Y-%m-%d")]))
-                c3.metric("قيد الانتظار", len(df[df['status'] == "New"]))
+                c3.metric("المعلق (Pending)", len(df[df['status'] == "New"]), delta_color="inverse")
                 
                 st.divider()
                 
-                # Charts
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("🏠 أكثر المكاتب طلباً")
-                    room_counts = df['user_room'].value_counts().reset_index()
-                    room_counts.columns = ['المكتب', 'العدد']
-                    fig1 = px.bar(room_counts, x='المكتب', y='العدد', color='العدد')
-                    st.plotly_chart(fig1, use_container_width=True)
+                # قسمين منفصلين (Office vs IT)
+                col_office, col_it = st.columns(2)
                 
-                with col2:
-                    st.subheader("☕ أكثر الأصناف طلباً")
-                    item_counts = df['item'].value_counts().reset_index()
-                    item_counts.columns = ['الصنف', 'العدد']
-                    fig2 = px.pie(item_counts, values='العدد', names='الصنف')
-                    st.plotly_chart(fig2, use_container_width=True)
+                # --- تحليلات الأوفيس ---
+                with col_office:
+                    st.markdown("### ☕ تحليلات الأوفيس (Buffet)")
+                    office_df = df[df['type'] == "Office"]
+                    
+                    if not office_df.empty:
+                        # تنظيف اسم المشروب (فصل السكر عن المشروب)
+                        office_df['clean_item'] = office_df['item'].apply(lambda x: x.split('-')[0].strip())
+                        
+                        # Pie Chart للمشروبات
+                        fig1 = px.pie(office_df, names='clean_item', title='المشروبات الأكثر طلباً')
+                        st.plotly_chart(fig1, use_container_width=True)
+                        
+                        # Bar Chart للغرف
+                        room_counts = office_df['user_room'].value_counts().reset_index()
+                        room_counts.columns = ['المكتب', 'العدد']
+                        fig2 = px.bar(room_counts, x='المكتب', y='العدد', title='أكثر المكاتب طلباً للبوفيه')
+                        st.plotly_chart(fig2, use_container_width=True)
+                    else:
+                        st.info("لا توجد بيانات بوفيه")
+
+                # --- تحليلات الـ IT ---
+                with col_it:
+                    st.markdown("### 💻 تحليلات الدعم الفني (IT)")
+                    it_df = df[df['type'] == "IT"]
+                    
+                    if not it_df.empty:
+                        # Pie Chart للمشاكل
+                        fig3 = px.pie(it_df, names='item', title='أنواع المشاكل التقنية', hole=0.4)
+                        st.plotly_chart(fig3, use_container_width=True)
+                        
+                        # Bar Chart للموظفين اللي بيطلبوا IT
+                        user_counts = it_df['user_name'].value_counts().reset_index()
+                        user_counts.columns = ['الموظف', 'العدد']
+                        fig4 = px.bar(user_counts, x='الموظف', y='العدد', title='أكثر الموظفين طلباً للدعم')
+                        st.plotly_chart(fig4, use_container_width=True)
+                    else:
+                        st.info("لا توجد بيانات IT")
+
             else:
                 st.info("لا توجد بيانات كافية للتحليل")
 
-        # 2. إدارة الموظفين
-        with tabs[1]:
+        # 2. الأدمن يطلب لنفسه (زي الموظف)
+        with admin_tabs[1]:
+            st.subheader("طلب سريع ليك يا ريس ☕")
+            req_type = st.radio("نوع الطلب", ["بوفيه", "دعم فني"], horizontal=True)
+            
+            if req_type == "بوفيه":
+                c1, c2 = st.columns(2)
+                drink = c1.selectbox("المشروب", ["قهوة", "شاي", "نسكافيه", "مياه", "ينسون"])
+                sugar = c1.selectbox("السكر", ["بدون", "مظبوط", "زيادة"])
+                notes = c2.text_input("ملاحظات")
+                if st.button("إرسال الطلب 🚀"):
+                    add_ticket(user, "Office", f"{drink} - {sugar}", notes)
+                    st.toast("طلبك وصل يا هندسة! 🫡")
+            else:
+                issue = st.selectbox("المشكلة", ["إنترنت", "طابعة", "كمبيوتر", "برامج"])
+                desc = st.text_area("وصف المشكلة")
+                if st.button("تسجيل تذكرة"):
+                    add_ticket(user, "IT", issue, desc)
+                    st.toast("تم تسجيل المشكلة")
+
+        # 3. إدارة الموظفين
+        with admin_tabs[2]:
             st.subheader("إضافة موظف جديد")
             with st.form("add_user"):
                 c1, c2 = st.columns(2)
@@ -142,18 +199,16 @@ if user:
                     db.users.delete_one({"_id": u['_id']})
                     st.rerun()
 
-        # 3. مراقبة الطلبات (يدوي للأدمن عشان ما يعملش ريفريش وهو شغال)
-        with tabs[2]:
-            st.subheader("الطلبات الحالية")
+        # 4. مراقبة الطلبات
+        with admin_tabs[3]:
             if st.button("تحديث القائمة 🔄"):
                 st.rerun()
-            
             tickets = list(db.tickets.find({"status": "New"}))
             for t in tickets:
                 st.warning(f"{t['type']} | {t['user_name']} ({t['user_room']}): {t['item']}")
 
     # ---------------------------------------------------------
-    # السيناريو الثاني: الموظف (نموذج إدخال ثابت بدون تحديث)
+    # السيناريو الثاني: الموظف (طلب فقط)
     # ---------------------------------------------------------
     elif user['role'] == "Employee":
         st.title(f"👋 أهلاً {user['name'].split()[0]}")
@@ -177,25 +232,24 @@ if user:
                 st.success("تم التبليغ!")
 
     # ---------------------------------------------------------
-    # السيناريو الثالث: مقدمي الخدمة (تحديث تلقائي لحظي ⚡)
+    # السيناريو الثالث: مقدمي الخدمة (Office Boy / IT) - Live View
     # ---------------------------------------------------------
     elif user['role'] in ["Office Boy", "IT Support"]:
         role_type = "Office" if user['role'] == "Office Boy" else "IT"
         
-        # عداد تنازلي للتحديث (شكلي فقط)
-        placeholder = st.empty()
-        
         st.header(f"📋 طلبات {role_type} (مباشر)")
         
-        # جلب الطلبات
+        # جلب الطلبات الجديدة فقط (Status = New)
         tickets = list(db.tickets.find({"type": role_type, "status": "New"}))
         
         if not tickets:
-            st.success("✅ مفيش طلبات جديدة.. كله تمام!")
-            st.image("https://media.giphy.com/media/26u4lOMA8JKSnL9Uk/giphy.gif", width=200) # صورة استرخاء
+            st.success("✅ الله ينور.. مفيش طلبات جديدة!")
+            st.image("https://media.giphy.com/media/26u4lOMA8JKSnL9Uk/giphy.gif", width=150)
         else:
             for t in tickets:
-                with st.container(border=True):
+                # استخدمنا container عشان نقدر نفضيه
+                ticket_container = st.container(border=True)
+                with ticket_container:
                     c1, c2 = st.columns([3, 1])
                     with c1:
                         st.markdown(f"### 📍 {t['user_room']}")
@@ -207,15 +261,16 @@ if user:
                     with c2:
                         st.write("")
                         st.write("")
-                        # زرار إنجاز المهمة
+                        # زرار التنفيذ مع الصوت
                         if st.button("تم التنفيذ ✅", key=str(t['_id']), type="primary"):
                             update_ticket_status(t['_id'], "Done")
-                            st.rerun()
+                            play_sound() # تشغيل الصوت
+                            st.toast("الله ينور عليك! 👏")
+                            time.sleep(1) # استنى ثانية عشان الصوت يلحق يشتغل
+                            st.rerun() # تحديث الصفحة عشان الطلب يختفي
 
-        # === كود التحديث التلقائي السحري ===
-        # بيشتغل بس هنا (للأوفيس والـ IT)
-        # بيستنى 3 ثواني ويعمل ريفريش عشان يجيب الطلبات الجديدة
-        time.sleep(3)
+        # التحديث التلقائي كل 5 ثواني
+        time.sleep(5)
         st.rerun()
 
 else:
