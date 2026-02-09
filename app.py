@@ -8,17 +8,14 @@ import time
 st.set_page_config(page_title="ITQAN Cloud", layout="wide", page_icon="☁️")
 
 # --- الاتصال بقاعدة البيانات (MongoDB) ---
+# التعديل: شيلنا الـ try/except عشان لو في خطأ يظهر بوضوح في الـ Logs
 @st.cache_resource
 def init_connection():
-    try:
-        return pymongo.MongoClient(st.secrets["mongo"]["connection_string"])
-    except:
-        st.error("مشكلة في الاتصال بقاعدة البيانات.. تأكد من الأسرار (Secrets)")
-        return None
+    return pymongo.MongoClient(st.secrets["mongo"]["connection_string"])
 
 client = init_connection()
 
-# اسم قاعدة البيانات
+# اسم قاعدة البيانات والجدول
 db = client.itqan_db 
 
 # --- دوال التعامل مع الداتا ---
@@ -58,14 +55,18 @@ def get_cups():
     return list(db.cups.find({"count": {"$gt": 0}}))
 
 # --- تسجيل مستخدمين افتراضيين (لأول مرة فقط) ---
-if db.users.count_documents({}) == 0:
-    users = [
-        {"username": "admin", "password": "123", "name": "Eng. Karim", "role": "Admin", "room": "IT Office"},
-        {"username": "ali", "password": "123", "name": "Ali Adel", "role": "Employee", "room": "Yellow Room"},
-        {"username": "office", "password": "123", "name": "Amr Office", "role": "Office Boy", "room": "Kitchen"},
-        {"username": "it", "password": "123", "name": "Support Team", "role": "IT Support", "room": "IT Room"}
-    ]
-    db.users.insert_many(users)
+# بنستخدم try هنا عشان لو الاتصال لسه فيه مشكلة ما يوقفش الصفحة كلها
+try:
+    if db.users.count_documents({}) == 0:
+        users = [
+            {"username": "admin", "password": "123", "name": "Eng. Karim", "role": "Admin", "room": "IT Office"},
+            {"username": "ali", "password": "123", "name": "Ali Adel", "role": "Employee", "room": "Yellow Room"},
+            {"username": "office", "password": "123", "name": "Amr Office", "role": "Office Boy", "room": "Kitchen"},
+            {"username": "it", "password": "123", "name": "Support Team", "role": "IT Support", "room": "IT Room"}
+        ]
+        db.users.insert_many(users)
+except:
+    pass # عدي الخطوة دي لو الداتا بيز لسه مش واصلة
 
 # --- نظام تسجيل الدخول ---
 def login():
@@ -77,14 +78,17 @@ def login():
     password = st.sidebar.text_input("كلمة المرور", type="password")
     
     if st.sidebar.button("دخول"):
-        user = get_user(username, password)
-        if user:
-            user['_id'] = str(user['_id'])
-            st.session_state['user'] = user
-            st.success("تم الدخول بنجاح")
-            st.rerun()
-        else:
-            st.sidebar.error("بيانات خطأ! جرب (admin / 123)")
+        try:
+            user = get_user(username, password)
+            if user:
+                user['_id'] = str(user['_id'])
+                st.session_state['user'] = user
+                st.success("تم الدخول بنجاح")
+                st.rerun()
+            else:
+                st.sidebar.error("بيانات خطأ! جرب (admin / 123)")
+        except Exception as e:
+             st.error(f"خطأ في الاتصال: {e}")
     return None
 
 # --- التطبيق الرئيسي ---
@@ -149,7 +153,7 @@ if user:
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
                     c1.write(f"**{r['user_name']}** ({r['user_room']}) -> {r['item']}")
-                    if c2.button("✅", key=r['_id']):
+                    if c2.button("✅", key=str(r['_id'])):
                         update_ticket_status(r['_id'], "Done")
                         st.rerun()
         else:
@@ -164,7 +168,7 @@ if user:
             for r in reqs:
                 st.error(f"🚨 {r['user_name']} ({r['user_room']}): {r['item']}")
                 st.write(f"التفاصيل: {r['details']}")
-                if st.button("تم الحل ✅", key=r['_id']):
+                if st.button("تم الحل ✅", key=str(r['_id'])):
                     update_ticket_status(r['_id'], "Done")
                     st.rerun()
                 st.markdown("---")
