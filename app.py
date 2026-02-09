@@ -18,7 +18,7 @@ def init_connection():
 client = init_connection()
 db = client.itqan_db
 
-# --- تهيئة المنيو (Upsert لمنع التكرار) ---
+# --- (1) تهيئة المنيو ---
 def init_menu():
     default_drinks = ["قهوة", "شاي", "نسكافيه", "مياه", "ينسون", "نعناع", "كركديه"]
     for d in default_drinks:
@@ -28,7 +28,16 @@ def init_menu():
             upsert=True
         )
 
+# --- (2) تهيئة الغرف (الرومات) - جديد ---
+def init_rooms():
+    # لو مفيش غرف خالص، حط دول كبداية
+    if db.rooms.count_documents({}) == 0:
+        default_rooms = ["IT Office", "HR Room", "Accounts", "CEO Office", "Reception", "Sales Team"]
+        for r in default_rooms:
+            db.rooms.insert_one({"name": r})
+
 init_menu()
+init_rooms()
 
 # --- تشغيل الصوت ---
 def play_sound():
@@ -92,22 +101,22 @@ if user:
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
-    # زرار التحديث للكل
+    # زرار تحديث البيانات
     if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
         st.rerun()
 
-    # === إدارة المنيو (للأدمن فـقـط) ===
-    # التعديل هنا: شيلنا Office Boy من الشرط
+    # === القوائم الجانبية للأدمن فقط ===
     if user['role'] == "Admin":
-        with st.sidebar.expander("☕ إدارة المنيو (أدمن)", expanded=False):
-            if st.button("🗑️ تنظيف التكرار", help="مسح وإعادة ضبط"):
+        
+        # 1. إدارة المشروبات
+        with st.sidebar.expander("☕ إدارة المنيو", expanded=False):
+            if st.button("🗑️ تنظيف التكرار"):
                 db.menu.delete_many({})
                 init_menu()
                 st.toast("تم التنظيف!")
                 time.sleep(1)
                 st.rerun()
-            st.divider()
-
+            
             st.write("المتاح حالياً:")
             menu_items = list(db.menu.find())
             for item in menu_items:
@@ -117,14 +126,30 @@ if user:
                     toggle_stock(item_id, is_available)
                     st.rerun()
             
-            st.divider()
             new_drink = st.text_input("صنف جديد")
-            if st.button("إضافة"):
-                if new_drink:
-                    clean_name = new_drink.strip()
-                    if not db.menu.find_one({"name": clean_name}):
-                        db.menu.insert_one({"name": clean_name, "available": True})
-                        st.rerun()
+            if st.button("إضافة للمنيو"):
+                if new_drink and not db.menu.find_one({"name": new_drink.strip()}):
+                    db.menu.insert_one({"name": new_drink.strip(), "available": True})
+                    st.rerun()
+
+        # 2. إدارة الغرف (الجديد) 🆕
+        with st.sidebar.expander("🏢 إدارة الغرف (Teams)", expanded=False):
+            st.write("الغرف المتاحة:")
+            rooms_list = list(db.rooms.find())
+            for r in rooms_list:
+                c1, c2 = st.columns([3, 1])
+                c1.text(f"📍 {r['name']}")
+                if c2.button("❌", key=f"del_room_{r['_id']}"):
+                    db.rooms.delete_one({"_id": r['_id']})
+                    st.rerun()
+            
+            new_room = st.text_input("إضافة غرفة/تيم جديد")
+            if st.button("إضافة غرفة"):
+                if new_room and not db.rooms.find_one({"name": new_room.strip()}):
+                    db.rooms.insert_one({"name": new_room.strip()})
+                    st.success(f"تم إضافة {new_room}")
+                    time.sleep(1)
+                    st.rerun()
 
     # زرار الخروج
     st.sidebar.divider()
@@ -139,101 +164,85 @@ if user:
     # ---------------------------------------------------------
     if user['role'] == "Admin":
         st.title("📊 لوحة المدير")
-        admin_tabs = st.tabs(["📈 التحليلات", "📝 طلب خاص", "👥 الموظفين", "👀 مراقبة"])
+        admin_tabs = st.tabs(["📈 التحليلات المتقدمة", "📝 طلب خاص", "👥 إدارة الموظفين", "👀 المراقبة"])
         
-        # 1. التحليلات (شهرية + يومية)
+        # 1. التحليلات (محدثة جداً)
         with admin_tabs[0]:
             all_data = list(db.tickets.find())
             
             if all_data:
                 df = pd.DataFrame(all_data)
                 
-                # تجهيز التواريخ
+                # تنظيف الداتا
                 df['datetime'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 if 'month_year' not in df.columns:
                     df['month_year'] = df['datetime'].dt.strftime('%Y-%m')
-                
-                st.subheader("📅 فلترة التقارير")
+                # تنظيف اسم المشروب (عشان التحليل)
+                df['item_clean'] = df['item'].apply(lambda x: x.split('-')[0].strip() if '-' in str(x) else str(x))
+
+                # --- الفلاتر ---
+                st.subheader("📅 الفلاتر")
                 col_m, col_d = st.columns(2)
-                
-                # 1. اختيار الشهر
                 unique_months = sorted([m for m in df['month_year'].dropna().unique() if isinstance(m, str)], reverse=True)
-                selected_month = col_m.selectbox("1️⃣ اختر الشهر:", unique_months)
+                selected_month = col_m.selectbox("الشهر:", unique_months)
                 
-                # فلترة مبدئية بالشهر
                 month_df = df[df['month_year'] == selected_month]
                 
-                # 2. اختيار اليوم (اختياري)
                 available_days = sorted(month_df['date_only'].unique())
-                # بنضيف خيار "الكل" في الأول
-                day_options = ["الكل (عرض الشهر كامل)"] + list(available_days)
-                selected_day = col_d.selectbox("2️⃣ اختر اليوم (اختياري):", day_options)
+                day_options = ["الكل"] + list(available_days)
+                selected_day = col_d.selectbox("اليوم:", day_options)
                 
-                # الفلترة النهائية
-                if selected_day != "الكل (عرض الشهر كامل)":
+                if selected_day != "الكل":
                     final_df = month_df[month_df['date_only'] == selected_day]
-                    report_title = f"تقرير يوم {selected_day}"
                 else:
                     final_df = month_df
-                    report_title = f"تقرير شهر {selected_month}"
                 
                 if not final_df.empty:
                     st.divider()
-                    st.markdown(f"### 📊 نتائج: {report_title}")
                     
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("إجمالي الطلبات", len(final_df))
-                    c2.metric("بوفيه", len(final_df[final_df['type'] == "Office"]))
-                    c3.metric("دعم فني", len(final_df[final_df['type'] == "IT"]))
+                    # --- (أ) أكثر الأشخاص طلباً ---
+                    st.subheader("🏆 مين أكتر ناس بتطلب؟")
+                    top_users = final_df['user_name'].value_counts().reset_index()
+                    top_users.columns = ['الموظف', 'عدد الطلبات']
                     
-                    st.divider()
-                    
-                    c_off, c_it = st.columns(2)
-                    with c_off:
-                        st.caption("☕ بوفيه")
-                        off_df = final_df[final_df['type'] == "Office"]
-                        if not off_df.empty:
-                            off_df['item_clean'] = off_df['item'].apply(lambda x: x.split('-')[0].strip())
-                            fig = px.pie(off_df, names='item_clean', title='توزيع المشروبات')
-                            fig.update_traces(textinfo='value+percent')
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.info("مفيش بوفيه في الفترة دي")
-
-                    with c_it:
-                        st.caption("💻 دعم فني")
-                        it_df = final_df[final_df['type'] == "IT"]
-                        if not it_df.empty:
-                            fig_it = px.bar(it_df['item'].value_counts().reset_index(), x='item', y='count', title='المشاكل')
-                            st.plotly_chart(fig_it, use_container_width=True)
-                        else:
-                            st.info("مفيش IT في الفترة دي")
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        # رسم بياني بالألوان يوضح الموظف + بيطلب إيه
+                        fig_users = px.bar(final_df, x='user_name', color='item_clean', title="توزيع طلبات الموظفين (بالأصناف)")
+                        st.plotly_chart(fig_users, use_container_width=True)
+                    with c2:
+                        st.write("🔝 الترتيب:")
+                        st.dataframe(top_users, hide_index=True)
 
                     st.divider()
+
+                    # --- (ب) أكثر الغرف طلباً ---
+                    st.subheader("🏢 مين أكتر غرفة بتستهلك؟")
+                    top_rooms = final_df['user_room'].value_counts().reset_index()
+                    top_rooms.columns = ['الغرفة', 'عدد الطلبات']
                     
-                    # التحميل والحذف
-                    st.subheader("⚙️ إدارة البيانات")
-                    col_act1, col_act2 = st.columns(2)
+                    c3, c4 = st.columns([2, 1])
+                    with c3:
+                        fig_rooms = px.bar(final_df, x='user_room', color='item_clean', title="استهلاك الغرف (بالأصناف)")
+                        st.plotly_chart(fig_rooms, use_container_width=True)
+                    with c4:
+                        st.write("🔝 ترتيب الغرف:")
+                        st.dataframe(top_rooms, hide_index=True)
+
+                    st.divider()
+
+                    # --- (ج) تحليل شخص بعينه ---
+                    st.subheader("🕵️ فتش عن موظف")
+                    all_users_in_period = final_df['user_name'].unique()
+                    target_user = st.selectbox("اختار الموظف عشان تشوف تفاصيله:", ["اختر..."] + list(all_users_in_period))
                     
-                    with col_act1:
-                        csv = final_df.to_csv(index=False).encode('utf-8-sig')
-                        st.download_button(
-                            label=f"📥 تحميل {report_title} (Excel)",
-                            data=csv,
-                            file_name=f"report_{selected_month}.csv",
-                            mime="text/csv",
-                        )
-                    
-                    with col_act2:
-                        # الحذف متاح للشهر بالكامل فقط (للأمان)
-                        with st.expander(f"🗑️ حذف بيانات شهر {selected_month} بالكامل"):
-                            st.warning("تحذير: الحذف هنا بيشيل الشهر كله مش اليوم بس!")
-                            confirm_delete = st.checkbox("أنا متأكد، امسح الشهر كله")
-                            if st.button("تأكيد الحذف 🧨", disabled=not confirm_delete):
-                                db.tickets.delete_many({"month_year": selected_month})
-                                st.success("تم الحذف!")
-                                time.sleep(2)
-                                st.rerun()
+                    if target_user != "اختر...":
+                        user_df = final_df[final_df['user_name'] == target_user]
+                        st.info(f"إجمالي طلبات {target_user}: {len(user_df)}")
+                        # رسم بياني دائري لمشروبات الشخص ده بس
+                        fig_person = px.pie(user_df, names='item_clean', title=f"مشروبات {target_user} المفضلة")
+                        st.plotly_chart(fig_person, use_container_width=True)
+
                 else:
                     st.warning("مفيش بيانات للفترة دي")
             else:
@@ -258,29 +267,39 @@ if user:
                     add_ticket(user, "IT", issue, "")
                     st.toast("تم")
 
-        # 3. إدارة الموظفين
+        # 3. إدارة الموظفين (بالتعديل الجديد للرومات)
         with admin_tabs[2]:
-            st.subheader("إضافة موظف")
+            st.subheader("إضافة موظف جديد")
             with st.form("new_user"):
                 c1, c2 = st.columns(2)
                 name = c1.text_input("الاسم")
                 uname = c2.text_input("اليوزر")
+                
                 c3, c4 = st.columns(2)
                 pwd = c3.text_input("باسورد", type="password")
-                room = c4.text_input("المكتب")
+                
+                # هنا التعديل: اختيار الروم من القائمة اللي الأدمن عملها
+                # بنجيب الرومات من الداتا بيز
+                available_rooms = [r['name'] for r in db.rooms.find()]
+                if not available_rooms:
+                    available_rooms = ["General"] # قيمة افتراضية لو مفيش رومات
+                
+                room = c4.selectbox("المكتب / التيم", available_rooms)
+                
                 role_map = {"موظف": "Employee", "بوفيه": "Office Boy", "IT": "IT Support", "مدير": "Admin"}
                 role_ar = st.selectbox("الوظيفة", list(role_map.keys()))
                 
-                if st.form_submit_button("حفظ"):
+                if st.form_submit_button("حفظ الموظف"):
                     if not db.users.find_one({"username": uname}):
                         db.users.insert_one({"name": name, "username": uname, "password": pwd, "room": room, "role": role_map[role_ar]})
                         st.success("تم")
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.error("موجود قبل كده")
+                        st.error("اليوزر ده موجود قبل كده")
             
-            st.write("الموظفين:")
+            st.divider()
+            st.write("📋 الموظفين الحاليين:")
             for u in db.users.find():
                 c1, c2, c3 = st.columns([2, 2, 1])
                 c1.text(f"{u['name']} ({u['role']})")
