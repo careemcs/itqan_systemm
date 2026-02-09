@@ -7,8 +7,8 @@ import time
 import streamlit.components.v1 as components
 from bson.objectid import ObjectId
 
-# --- إعداد الصفحة ---
-st.set_page_config(page_title="ITQAN Cloud", layout="wide", page_icon="☁️")
+# --- إعداد الصفحة (العنوان والأيقونة) ---
+st.set_page_config(page_title="نظام إتقان", layout="wide", page_icon="☕")
 
 # --- الاتصال بقاعدة البيانات ---
 @st.cache_resource
@@ -18,7 +18,16 @@ def init_connection():
 client = init_connection()
 db = client.itqan_db
 
-# --- تشغيل الصوت ---
+# --- تهيئة المنيو لأول مرة (بالعربي) ---
+def init_menu():
+    if db.menu.count_documents({}) == 0:
+        default_drinks = ["قهوة", "شاي", "نسكافيه", "مياه", "ينسون", "نعناع", "كركديه"]
+        for d in default_drinks:
+            db.menu.insert_one({"name": d, "available": True})
+
+init_menu()
+
+# --- تشغيل الصوت (جرس التنبيه) ---
 def play_sound():
     sound_code = """
     <audio autoplay>
@@ -27,7 +36,7 @@ def play_sound():
     """
     components.html(sound_code, height=0, width=0)
 
-# --- دوال الداتا بيز ---
+# --- دوال التعامل مع الداتا ---
 def get_user(username, password):
     return db.users.find_one({"username": username, "password": password})
 
@@ -47,189 +56,280 @@ def add_ticket(user_data, type, item, details):
 def update_ticket_status(ticket_id, status):
     db.tickets.update_one({"_id": ObjectId(ticket_id)}, {"$set": {"status": status}})
 
-# --- تسجيل الدخول ---
+def toggle_stock(item_name, status):
+    db.menu.update_one({"name": item_name}, {"$set": {"available": status}})
+
+# --- شاشة تسجيل الدخول (بالعربي) ---
 def login():
-    st.sidebar.title("🔐 ITQAN System")
+    st.sidebar.title("🔐 نظام إتقان")
     if 'user' in st.session_state:
         return st.session_state['user']
 
-    username = st.sidebar.text_input("اسم المستخدم")
-    password = st.sidebar.text_input("كلمة المرور", type="password")
+    username = st.sidebar.text_input("اسم المستخدم", placeholder="اكتب اليوزر هنا")
+    password = st.sidebar.text_input("كلمة السر", type="password")
     
-    if st.sidebar.button("دخول"):
+    if st.sidebar.button("تسجيل دخول"):
         user = get_user(username, password)
         if user:
             user['_id'] = str(user['_id'])
             st.session_state['user'] = user
             st.rerun()
         else:
-            st.sidebar.error("بيانات خطأ")
+            st.sidebar.error("بيانات غلط يا هندسة.. جرب تاني!")
     return None
 
-# ==================== التطبيق الرئيسي ====================
+# ==================== بداية التطبيق ====================
 user = login()
 
 if user:
+    # القائمة الجانبية (بياناتي)
     st.sidebar.divider()
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
-    if st.sidebar.button("تسجيل خروج", type="primary"):
+    # === إدارة المنيو (للأدمن والأوفيس بوي بس) ===
+    if user['role'] in ["Admin", "Office Boy"]:
+        with st.sidebar.expander("☕ إدارة المشروبات (المتاح والخلصان)", expanded=False):
+            st.write("علم صح (✅) عالموجود، وشيل الصح لو خلصان:")
+            menu_items = list(db.menu.find())
+            for item in menu_items:
+                # Checkbox لكل مشروب
+                is_available = st.checkbox(item['name'], value=item['available'], key=f"stock_{item['name']}")
+                if is_available != item['available']:
+                    toggle_stock(item['name'], is_available)
+                    status_text = "متاح" if is_available else "خلصان"
+                    st.toast(f"تمام.. {item['name']} بقى {status_text}")
+                    time.sleep(0.5)
+                    st.rerun()
+            
+            # إضافة مشروب جديد (أدمن بس)
+            if user['role'] == "Admin":
+                st.divider()
+                new_drink = st.text_input("ضيف صنف جديد للقائمة")
+                if st.button("إضافة للمنيو"):
+                    if new_drink:
+                        if db.menu.find_one({"name": new_drink}):
+                            st.warning("المشروب ده موجود أصلاً!")
+                        else:
+                            db.menu.insert_one({"name": new_drink, "available": True})
+                            st.success(f"تم إضافة {new_drink} للمنيو")
+                            time.sleep(1)
+                            st.rerun()
+
+    # زرار الخروج
+    if st.sidebar.button("خروج", type="primary"):
         del st.session_state['user']
         if 'trash_bin' in st.session_state:
             del st.session_state['trash_bin']
         st.rerun()
 
     # ---------------------------------------------------------
-    # السيناريو الأول: الأدمن
+    # السيناريو الأول: الأدمن (المدير)
     # ---------------------------------------------------------
     if user['role'] == "Admin":
-        st.title("📊 Admin Dashboard")
-        admin_tabs = st.tabs(["📈 التحليلات", "📝 تقديم طلب", "👥 الموظفين", "👀 مراقبة الطلبات"])
+        st.title("📊 لوحة التحكم والإدارة")
+        admin_tabs = st.tabs(["📈 التحليلات", "📝 اطلب لنفسك", "👥 الموظفين", "👀 مراقبة الكل"])
         
         # 1. التحليلات
         with admin_tabs[0]:
             data = list(db.tickets.find())
             if data:
                 df = pd.DataFrame(data)
+                # كروت الأرقام
                 c1, c2, c3 = st.columns(3)
-                c1.metric("الكل", len(df))
-                c2.metric("اليوم", len(df[df['date_only'] == datetime.now().strftime("%Y-%m-%d")]))
-                c3.metric("المعلق", len(df[df['status'] == "New"]))
+                c1.metric("إجمالي الطلبات", len(df))
+                c2.metric("طلبات النهاردة", len(df[df['date_only'] == datetime.now().strftime("%Y-%m-%d")]))
+                c3.metric("لسه ماتعملش (Pending)", len(df[df['status'] == "New"]))
                 st.divider()
                 
                 c_off, c_it = st.columns(2)
                 with c_off:
-                    st.write("☕ **الأوفيس**")
+                    st.subheader("☕ البوفيه والمشاريب")
                     off_df = df[df['type'] == "Office"]
                     if not off_df.empty:
+                        # تنظيف الاسم عشان نجمع القهوة كلها مع بعض
                         off_df['item_clean'] = off_df['item'].apply(lambda x: x.split('-')[0].strip())
-                        st.plotly_chart(px.pie(off_df, names='item_clean'), use_container_width=True)
-                        st.plotly_chart(px.bar(off_df['user_room'].value_counts().reset_index(), x='user_room', y='count'), use_container_width=True)
+                        
+                        # رسمة الدايرة
+                        fig = px.pie(off_df, names='item_clean', title='أكتر مشاريب بتتطلب')
+                        fig.update_traces(textinfo='value+percent') 
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # رسمة العواميد
+                        fig2 = px.bar(off_df['user_room'].value_counts().reset_index(), x='user_room', y='count', title='مين بيطلب أكتر (المكاتب)')
+                        fig2.update_traces(texttemplate='%{y}', textposition='outside')
+                        st.plotly_chart(fig2, use_container_width=True)
+                    else:
+                        st.info("مفيش طلبات بوفيه لسه")
+
                 with c_it:
-                    st.write("💻 **IT**")
+                    st.subheader("💻 الدعم الفني (IT)")
                     it_df = df[df['type'] == "IT"]
                     if not it_df.empty:
-                        st.plotly_chart(px.pie(it_df, names='item'), use_container_width=True)
-                        st.plotly_chart(px.bar(it_df['user_name'].value_counts().reset_index(), x='user_name', y='count'), use_container_width=True)
+                        fig_it = px.pie(it_df, names='item', title='أنواع المشاكل')
+                        fig_it.update_traces(textinfo='value+percent')
+                        st.plotly_chart(fig_it, use_container_width=True)
+                    else:
+                        st.info("مفيش مشاكل IT (الحمد لله)")
             else:
-                st.info("لا توجد بيانات")
+                st.info("لسه السيستم جديد، مفيش داتا نعرضها.")
 
-        # 2. طلب للأدمن
+        # 2. الأدمن يطلب لنفسه
         with admin_tabs[1]:
-            type_ = st.radio("النوع", ["بوفيه", "IT"], horizontal=True)
+            type_ = st.radio("عاوز تطلب إيه؟", ["بوفيه", "دعم فني (IT)"], horizontal=True)
             if type_ == "بوفيه":
-                c1, c2 = st.columns(2)
-                item = c1.selectbox("الصنف", ["قهوة", "شاي", "نسكافيه", "مياه"])
-                sugar = c1.selectbox("سكر", ["مظبوط", "زيادة", "بدون"])
-                if st.button("اطلب"):
-                    add_ticket(user, "Office", f"{item} - {sugar}", "")
-                    st.toast("تم!")
+                available_drinks = [d['name'] for d in db.menu.find({"available": True})]
+                if available_drinks:
+                    c1, c2 = st.columns(2)
+                    item = c1.selectbox("هتشرب إيه؟", available_drinks)
+                    sugar_opts = ["سادة", "على الريحة", "مظبوط", "زيادة", "سكر خفيف", "نص معلقة", "معلقة", "معلقة ونص", "معلقتين", "3 معالق"]
+                    sugar = c1.selectbox("السكر", sugar_opts)
+                    notes = c2.text_input("ملاحظات (اختياري)")
+                    if st.button("اطلب يا ريس ☕"):
+                        add_ticket(user, "Office", f"{item} - {sugar}", notes)
+                        st.toast("طلبك وصل!")
+                else:
+                    st.error("البوفيه مفيهوش حاجة متاحة دلوقتي!")
             else:
-                issue = st.selectbox("المشكلة", ["نت", "طابعة", "PC"])
-                if st.button("بلغ"):
-                    add_ticket(user, "IT", issue, "")
-                    st.toast("تم!")
+                issue = st.selectbox("المشكلة فين؟", ["النت فاصل", "الطابعة", "الكمبيوتر", "برامج (Excel/Word)"])
+                desc = st.text_area("تفاصيل المشكلة")
+                if st.button("بلغ الـ IT"):
+                    add_ticket(user, "IT", issue, desc)
+                    st.toast("تم التبليغ!")
 
-        # 3. الموظفين
+        # 3. إدارة الموظفين
         with admin_tabs[2]:
+            st.subheader("إضافة موظف جديد")
             with st.form("new_user"):
-                name = st.text_input("الاسم")
-                uname = st.text_input("اليوزر")
-                pwd = st.text_input("باسورد", type="password")
-                room = st.text_input("المكتب")
-                role = st.selectbox("وظيفة", ["Employee", "Office Boy", "IT Support", "Admin"])
-                if st.form_submit_button("إضافة"):
-                    db.users.insert_one({"name": name, "username": uname, "password": pwd, "room": room, "role": role})
-                    st.success("تم")
-                    time.sleep(1)
+                c1, c2 = st.columns(2)
+                name = c1.text_input("الاسم بالكامل")
+                uname = c2.text_input("اسم المستخدم (للدخول)")
+                c3, c4 = st.columns(2)
+                pwd = c3.text_input("كلمة السر", type="password")
+                room = c4.text_input("رقم المكتب / الغرفة")
+                # هنا بنعرض الأسماء بالعربي بس بنحفظها بالانجليزي عشان الكود
+                role_map = {"موظف": "Employee", "عامل بوفيه": "Office Boy", "دعم فني": "IT Support", "مدير (Admin)": "Admin"}
+                role_ar = st.selectbox("الوظيفة", list(role_map.keys()))
+                
+                if st.form_submit_button("حفظ الموظف"):
+                    if db.users.find_one({"username": uname}):
+                        st.error("اسم المستخدم ده موجود قبل كده، شوف غيره!")
+                    else:
+                        db.users.insert_one({"name": name, "username": uname, "password": pwd, "room": room, "role": role_map[role_ar]})
+                        st.success("تم إضافة الموظف بنجاح!")
+                        time.sleep(1)
+                        st.rerun()
+            
+            st.divider()
+            st.write("📋 **قائمة الموظفين:**")
+            for u in db.users.find():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                # ترجمة الوظيفة للعرض
+                role_display = {"Employee": "موظف", "Office Boy": "بوفيه", "IT Support": "IT", "Admin": "مدير"}.get(u['role'], u['role'])
+                col1.text(f"{u['name']} ({role_display})")
+                col2.text(u['room'])
+                if col3.button("حذف", key=u['username']):
+                    db.users.delete_one({"_id": u['_id']})
                     st.rerun()
 
-        # 4. المراقبة
+        # 4. مراقبة الطلبات
         with admin_tabs[3]:
-            if st.button("تحديث"): st.rerun()
-            for t in db.tickets.find({"status": "New"}):
-                st.warning(f"{t['type']} - {t['user_name']} - {t['item']}")
+            if st.button("تحديث القائمة 🔄"): st.rerun()
+            tickets = list(db.tickets.find({"status": "New"}))
+            if not tickets:
+                st.success("الجو رايق.. مفيش طلبات معلقة.")
+            for t in tickets:
+                st.warning(f"🔔 {t['type']} | {t['user_name']} | {t['item']}")
 
     # ---------------------------------------------------------
-    # السيناريو الثاني: الموظف
+    # السيناريو الثاني: الموظف (الواجهة الرئيسية)
     # ---------------------------------------------------------
     elif user['role'] == "Employee":
-        st.title(f"👋 {user['name']}")
-        tabs = st.tabs(["☕ بوفيه", "💻 IT"])
+        st.title(f"منور يا هندسة 👋 {user['name'].split()[0]}")
+        tabs = st.tabs(["☕ طلب بوفيه", "💻 دعم فني"])
+        
         with tabs[0]:
-            c1, c2 = st.columns(2)
-            item = c1.selectbox("مشروبك", ["قهوة", "شاي", "نسكافيه", "مياه"])
-            sugar = c1.selectbox("السكر", ["مظبوط", "زيادة", "بدون"])
-            if st.button("اطلب 🚀", use_container_width=True):
-                add_ticket(user, "Office", f"{item} - {sugar}", "")
-                st.success("تم الإرسال")
+            # بنجيب المشروبات المتاحة بس
+            available_drinks = [d['name'] for d in db.menu.find({"available": True})]
+            
+            if available_drinks:
+                c1, c2 = st.columns(2)
+                item = c1.selectbox("هتشرب إيه؟", available_drinks)
+                
+                # قائمة السكر المصري
+                sugar_opts = ["سادة", "على الريحة", "مظبوط", "زيادة", "سكر خفيف", "نص معلقة", "معلقة", "معلقة ونص", "معلقتين", "3 معالق"]
+                sugar = c1.selectbox("السكر", sugar_opts)
+                
+                notes = c2.text_input("أي ملاحظات؟ (اختياري)")
+                
+                if st.button("اطلب 🚀", use_container_width=True):
+                    add_ticket(user, "Office", f"{item} - {sugar}", notes)
+                    st.success("تمام.. طلبك وصل للأوفيس!")
+            else:
+                st.error("⚠️ معلش، البوفيه مغلق أو المشروبات خلصت.")
+
         with tabs[1]:
-            issue = st.selectbox("المشكلة", ["نت", "طابعة", "PC"])
-            if st.button("بلغ IT 🛠️", use_container_width=True):
-                add_ticket(user, "IT", issue, "")
-                st.success("تم التبليغ")
+            issue = st.selectbox("المشكلة فين؟", ["النت فاصل", "الطابعة مش شغالة", "الكمبيوتر تقيل", "برامج (Office/Windows)"])
+            desc = st.text_area("أوصف المشكلة باختصار")
+            if st.button("بلغ الـ IT 🛠️", use_container_width=True):
+                add_ticket(user, "IT", issue, desc)
+                st.success("تم التبليغ وهيكلموك حالاً.")
 
     # ---------------------------------------------------------
-    # السيناريو الثالث: مقدمي الخدمة (Live View) ⚡⚡
+    # السيناريو الثالث: مقدمي الخدمة (شاشة المطبخ / الـ IT)
     # ---------------------------------------------------------
     elif user['role'] in ["Office Boy", "IT Support"]:
         role_type = "Office" if user['role'] == "Office Boy" else "IT"
-        st.header(f"📋 طلبات {role_type} (مباشر)")
+        title_ar = "طلبات البوفيه ☕" if role_type == "Office" else "بلاغات الدعم الفني 🔧"
+        st.header(f"📋 {title_ar} (مباشر)")
 
-        # 1. تهيئة "سلة المهملات المحلية" (Trash Bin)
+        # سلة المهملات المحلية (للاخفاء الفوري)
         if 'trash_bin' not in st.session_state:
             st.session_state['trash_bin'] = []
 
-        # --- الـ Callback السحري ---
-        # الدالة دي بتشتغل فوراً عند الضغط
+        # الدالة السحرية اللي بتخفي الطلب
         def move_to_trash(ticket_id):
-            # أ. رمي في السلة فوراً
             st.session_state['trash_bin'].append(ticket_id)
-            # ب. تشغيل الصوت
-            play_sound()
-            # ج. تحديث الداتا بيز في الخلفية
-            update_ticket_status(ticket_id, "Done")
+            play_sound() # تشغيل الجرس
+            update_ticket_status(ticket_id, "Done") # تحديث الداتا بيز
 
-        # 2. جلب الطلبات من الداتا بيز
+        # 1. هات كل الطلبات الجديدة
         all_tickets = list(db.tickets.find({"type": role_type, "status": "New"}))
-
-        # 3. الفلترة (الخطوة الأهم):
-        # اعرض فقط الطلبات اللي مش موجودة في سلة المهملات
+        # 2. شيل منها اللي احنا لسه دايسين عليه
         visible_tickets = [t for t in all_tickets if str(t['_id']) not in st.session_state['trash_bin']]
 
         if not visible_tickets:
-            st.success("✅ كله تمام يا ريس.. مفيش طلبات!")
+            st.success("✅ تسلم ايدك.. مفيش طلبات جديدة!")
             st.image("https://media.giphy.com/media/26u4lOMA8JKSnL9Uk/giphy.gif", width=150)
-            # ريح السيرفر ثانية واحدة
             time.sleep(1)
             st.rerun()
         else:
             for t in visible_tickets:
                 t_id = str(t['_id'])
-                # كارت الطلب
+                # شكل الكارت
                 with st.container(border=True):
                     c1, c2 = st.columns([3, 1])
                     with c1:
-                        st.subheader(f"📍 {t['user_room']}")
-                        st.write(f"👤 {t['user_name']}")
-                        st.info(f"☕ {t['item']}")
-                        st.caption(t['timestamp'])
+                        st.subheader(f"📍 {t['user_room']}") # المكان
+                        st.write(f"👤 **{t['user_name']}**") # الاسم
+                        st.info(f"☕ {t['item']}") # الطلب
+                        if t['details']: st.caption(f"📝 ملاحظة: {t['details']}")
+                        st.caption(t['timestamp']) # الوقت
                     with c2:
                         st.write("")
                         st.write("")
-                        # الزرار اللي بيودي للسلة
+                        # زرار التنفيذ
                         st.button(
-                            "تم ✅", 
+                            "تم التمام ✅", 
                             key=f"btn_{t_id}", 
                             type="primary", 
-                            on_click=move_to_trash, # استدعاء دالة النقل للسلة
+                            on_click=move_to_trash, 
                             args=(t_id,)
                         )
             
-            # تحديث سريع جداً عشان الاستجابة
+            # تحديث سريع عشان الاستجابة
             time.sleep(1)
             st.rerun()
 
 else:
-    st.info("سجل دخول")
+    st.info("من فضلك سجل دخول الأول")
