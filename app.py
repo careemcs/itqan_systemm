@@ -28,9 +28,8 @@ def init_menu():
             upsert=True
         )
 
-# --- (2) تهيئة الغرف (الرومات) - جديد ---
+# --- (2) تهيئة الغرف ---
 def init_rooms():
-    # لو مفيش غرف خالص، حط دول كبداية
     if db.rooms.count_documents({}) == 0:
         default_rooms = ["IT Office", "HR Room", "Accounts", "CEO Office", "Reception", "Sales Team"]
         for r in default_rooms:
@@ -101,11 +100,10 @@ if user:
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
-    # زرار تحديث البيانات
     if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
         st.rerun()
 
-    # === القوائم الجانبية للأدمن فقط ===
+    # === القوائم الجانبية للأدمن ===
     if user['role'] == "Admin":
         
         # 1. إدارة المشروبات
@@ -132,7 +130,7 @@ if user:
                     db.menu.insert_one({"name": new_drink.strip(), "available": True})
                     st.rerun()
 
-        # 2. إدارة الغرف (الجديد) 🆕
+        # 2. إدارة الغرف
         with st.sidebar.expander("🏢 إدارة الغرف (Teams)", expanded=False):
             st.write("الغرف المتاحة:")
             rooms_list = list(db.rooms.find())
@@ -166,7 +164,7 @@ if user:
         st.title("📊 لوحة المدير")
         admin_tabs = st.tabs(["📈 التحليلات المتقدمة", "📝 طلب خاص", "👥 إدارة الموظفين", "👀 المراقبة"])
         
-        # 1. التحليلات (محدثة جداً)
+        # 1. التحليلات (منفصلة ومفصلة)
         with admin_tabs[0]:
             all_data = list(db.tickets.find())
             
@@ -177,17 +175,16 @@ if user:
                 df['datetime'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 if 'month_year' not in df.columns:
                     df['month_year'] = df['datetime'].dt.strftime('%Y-%m')
-                # تنظيف اسم المشروب (عشان التحليل)
+                # استخراج اسم المشروب النظيف
                 df['item_clean'] = df['item'].apply(lambda x: x.split('-')[0].strip() if '-' in str(x) else str(x))
 
-                # --- الفلاتر ---
-                st.subheader("📅 الفلاتر")
+                # --- الفلاتر (التاريخ) ---
+                st.subheader("📅 ضبط الفترة الزمنية")
                 col_m, col_d = st.columns(2)
                 unique_months = sorted([m for m in df['month_year'].dropna().unique() if isinstance(m, str)], reverse=True)
                 selected_month = col_m.selectbox("الشهر:", unique_months)
                 
                 month_df = df[df['month_year'] == selected_month]
-                
                 available_days = sorted(month_df['date_only'].unique())
                 day_options = ["الكل"] + list(available_days)
                 selected_day = col_d.selectbox("اليوم:", day_options)
@@ -200,48 +197,93 @@ if user:
                 if not final_df.empty:
                     st.divider()
                     
-                    # --- (أ) أكثر الأشخاص طلباً ---
-                    st.subheader("🏆 مين أكتر ناس بتطلب؟")
-                    top_users = final_df['user_name'].value_counts().reset_index()
-                    top_users.columns = ['الموظف', 'عدد الطلبات']
-                    
-                    c1, c2 = st.columns([2, 1])
-                    with c1:
-                        # رسم بياني بالألوان يوضح الموظف + بيطلب إيه
-                        fig_users = px.bar(final_df, x='user_name', color='item_clean', title="توزيع طلبات الموظفين (بالأصناف)")
-                        st.plotly_chart(fig_users, use_container_width=True)
-                    with c2:
-                        st.write("🔝 الترتيب:")
-                        st.dataframe(top_users, hide_index=True)
-
+                    # --- (أ) زرار الفصل (Toggle) ---
+                    # هنا بنختار احنا عاوزين نعرض إيه
+                    view_mode = st.radio("اختر نوع التقرير:", ["☕ تحليلات البوفيه", "💻 تحليلات الـ IT"], horizontal=True)
                     st.divider()
 
-                    # --- (ب) أكثر الغرف طلباً ---
-                    st.subheader("🏢 مين أكتر غرفة بتستهلك؟")
-                    top_rooms = final_df['user_room'].value_counts().reset_index()
-                    top_rooms.columns = ['الغرفة', 'عدد الطلبات']
-                    
-                    c3, c4 = st.columns([2, 1])
-                    with c3:
-                        fig_rooms = px.bar(final_df, x='user_room', color='item_clean', title="استهلاك الغرف (بالأصناف)")
-                        st.plotly_chart(fig_rooms, use_container_width=True)
-                    with c4:
-                        st.write("🔝 ترتيب الغرف:")
-                        st.dataframe(top_rooms, hide_index=True)
+                    # ==================== عرض البوفيه ====================
+                    if view_mode == "☕ تحليلات البوفيه":
+                        off_df = final_df[final_df['type'] == "Office"]
+                        
+                        if not off_df.empty:
+                            # 1. كروت الأرقام
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("إجمالي المشروبات", len(off_df))
+                            c2.metric("أكثر مشروب طلب", off_df['item_clean'].mode()[0] if not off_df.empty else "-")
+                            c3.metric("أكثر مكتب طلب", off_df['user_room'].mode()[0] if not off_df.empty else "-")
+                            
+                            st.divider()
 
-                    st.divider()
+                            # 2. تحليل الأصناف (Top Drinks) - طلبك الأول
+                            st.subheader("🏆 المشروبات الأكثر طلباً")
+                            top_drinks = off_df['item_clean'].value_counts().reset_index()
+                            top_drinks.columns = ['المشروب', 'العدد']
+                            
+                            c_ch, c_tb = st.columns([2, 1])
+                            with c_ch:
+                                fig_drinks = px.bar(top_drinks, x='المشروب', y='العدد', color='العدد', text_auto=True, title="ترتيب المشروبات")
+                                st.plotly_chart(fig_drinks, use_container_width=True)
+                            with c_tb:
+                                st.write("🔢 بالأرقام:")
+                                st.dataframe(top_drinks, hide_index=True, use_container_width=True)
+                            
+                            st.divider()
 
-                    # --- (ج) تحليل شخص بعينه ---
-                    st.subheader("🕵️ فتش عن موظف")
-                    all_users_in_period = final_df['user_name'].unique()
-                    target_user = st.selectbox("اختار الموظف عشان تشوف تفاصيله:", ["اختر..."] + list(all_users_in_period))
-                    
-                    if target_user != "اختر...":
-                        user_df = final_df[final_df['user_name'] == target_user]
-                        st.info(f"إجمالي طلبات {target_user}: {len(user_df)}")
-                        # رسم بياني دائري لمشروبات الشخص ده بس
-                        fig_person = px.pie(user_df, names='item_clean', title=f"مشروبات {target_user} المفضلة")
-                        st.plotly_chart(fig_person, use_container_width=True)
+                            # 3. تحليل الأشخاص (مين بيشرب إيه)
+                            st.subheader("👥 استهلاك الموظفين")
+                            c_p1, c_p2 = st.columns([2, 1])
+                            with c_p1:
+                                fig_users = px.bar(off_df, x='user_name', color='item_clean', title="مين طلب إيه؟")
+                                st.plotly_chart(fig_users, use_container_width=True)
+                            with c_p2:
+                                top_users = off_df['user_name'].value_counts().reset_index()
+                                top_users.columns = ['الموظف', 'العدد']
+                                st.dataframe(top_users, hide_index=True)
+
+                        else:
+                            st.warning("مفيش طلبات بوفيه في الفترة دي")
+
+                    # ==================== عرض الـ IT ====================
+                    elif view_mode == "💻 تحليلات الـ IT":
+                        it_df = final_df[final_df['type'] == "IT"]
+                        
+                        if not it_df.empty:
+                            # 1. كروت الأرقام
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("إجمالي البلاغات", len(it_df))
+                            c2.metric("أكثر مشكلة تكراراً", it_df['item'].mode()[0] if not it_df.empty else "-")
+                            c3.metric("أكثر مكتب عنده مشاكل", it_df['user_room'].mode()[0] if not it_df.empty else "-")
+                            
+                            st.divider()
+
+                            # 2. تحليل المشاكل (Top Issues) - طلبك الأول
+                            st.subheader("🔧 المشاكل الأكثر شيوعاً")
+                            top_issues = it_df['item'].value_counts().reset_index()
+                            top_issues.columns = ['المشكلة', 'التكرار']
+                            
+                            c_ch, c_tb = st.columns([2, 1])
+                            with c_ch:
+                                fig_issues = px.bar(top_issues, x='المشكلة', y='التكرار', color='التكرار', text_auto=True, title="توزيع المشاكل")
+                                st.plotly_chart(fig_issues, use_container_width=True)
+                            with c_tb:
+                                st.write("🔢 بالأرقام:")
+                                st.dataframe(top_issues, hide_index=True, use_container_width=True)
+                            
+                            st.divider()
+
+                            # 3. تحليل الأشخاص والغرف
+                            st.subheader("🏢 مصدر البلاغات")
+                            c_p1, c_p2 = st.columns(2)
+                            with c_p1:
+                                fig_rooms = px.pie(it_df, names='user_room', title="توزيع المشاكل على الغرف")
+                                st.plotly_chart(fig_rooms, use_container_width=True)
+                            with c_p2:
+                                fig_users_it = px.bar(it_df['user_name'].value_counts().reset_index(), x='user_name', y='count', title="الموظفين الأكثر تبليغاً")
+                                st.plotly_chart(fig_users_it, use_container_width=True)
+
+                        else:
+                            st.warning("مفيش بلاغات IT في الفترة دي")
 
                 else:
                     st.warning("مفيش بيانات للفترة دي")
@@ -267,23 +309,19 @@ if user:
                     add_ticket(user, "IT", issue, "")
                     st.toast("تم")
 
-        # 3. إدارة الموظفين (بالتعديل الجديد للرومات)
+        # 3. إدارة الموظفين
         with admin_tabs[2]:
             st.subheader("إضافة موظف جديد")
             with st.form("new_user"):
                 c1, c2 = st.columns(2)
                 name = c1.text_input("الاسم")
                 uname = c2.text_input("اليوزر")
-                
                 c3, c4 = st.columns(2)
                 pwd = c3.text_input("باسورد", type="password")
                 
-                # هنا التعديل: اختيار الروم من القائمة اللي الأدمن عملها
-                # بنجيب الرومات من الداتا بيز
+                # اختيار الروم
                 available_rooms = [r['name'] for r in db.rooms.find()]
-                if not available_rooms:
-                    available_rooms = ["General"] # قيمة افتراضية لو مفيش رومات
-                
+                if not available_rooms: available_rooms = ["General"]
                 room = c4.selectbox("المكتب / التيم", available_rooms)
                 
                 role_map = {"موظف": "Employee", "بوفيه": "Office Boy", "IT": "IT Support", "مدير": "Admin"}
