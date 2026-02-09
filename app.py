@@ -164,7 +164,7 @@ if user:
         st.title("📊 لوحة المدير")
         admin_tabs = st.tabs(["📈 التحليلات المتقدمة", "📝 طلب خاص", "👥 إدارة الموظفين", "👀 المراقبة"])
         
-        # 1. التحليلات (منفصلة ومفصلة)
+        # 1. التحليلات
         with admin_tabs[0]:
             all_data = list(db.tickets.find())
             
@@ -175,10 +175,9 @@ if user:
                 df['datetime'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 if 'month_year' not in df.columns:
                     df['month_year'] = df['datetime'].dt.strftime('%Y-%m')
-                # استخراج اسم المشروب النظيف
                 df['item_clean'] = df['item'].apply(lambda x: x.split('-')[0].strip() if '-' in str(x) else str(x))
 
-                # --- الفلاتر (التاريخ) ---
+                # الفلاتر
                 st.subheader("📅 ضبط الفترة الزمنية")
                 col_m, col_d = st.columns(2)
                 unique_months = sorted([m for m in df['month_year'].dropna().unique() if isinstance(m, str)], reverse=True)
@@ -197,25 +196,18 @@ if user:
                 if not final_df.empty:
                     st.divider()
                     
-                    # --- (أ) زرار الفصل (Toggle) ---
-                    # هنا بنختار احنا عاوزين نعرض إيه
                     view_mode = st.radio("اختر نوع التقرير:", ["☕ تحليلات البوفيه", "💻 تحليلات الـ IT"], horizontal=True)
                     st.divider()
 
-                    # ==================== عرض البوفيه ====================
                     if view_mode == "☕ تحليلات البوفيه":
                         off_df = final_df[final_df['type'] == "Office"]
-                        
                         if not off_df.empty:
-                            # 1. كروت الأرقام
                             c1, c2, c3 = st.columns(3)
                             c1.metric("إجمالي المشروبات", len(off_df))
                             c2.metric("أكثر مشروب طلب", off_df['item_clean'].mode()[0] if not off_df.empty else "-")
                             c3.metric("أكثر مكتب طلب", off_df['user_room'].mode()[0] if not off_df.empty else "-")
-                            
                             st.divider()
 
-                            # 2. تحليل الأصناف (Top Drinks) - طلبك الأول
                             st.subheader("🏆 المشروبات الأكثر طلباً")
                             top_drinks = off_df['item_clean'].value_counts().reset_index()
                             top_drinks.columns = ['المشروب', 'العدد']
@@ -227,10 +219,8 @@ if user:
                             with c_tb:
                                 st.write("🔢 بالأرقام:")
                                 st.dataframe(top_drinks, hide_index=True, use_container_width=True)
-                            
                             st.divider()
 
-                            # 3. تحليل الأشخاص (مين بيشرب إيه)
                             st.subheader("👥 استهلاك الموظفين")
                             c_p1, c_p2 = st.columns([2, 1])
                             with c_p1:
@@ -240,24 +230,18 @@ if user:
                                 top_users = off_df['user_name'].value_counts().reset_index()
                                 top_users.columns = ['الموظف', 'العدد']
                                 st.dataframe(top_users, hide_index=True)
-
                         else:
                             st.warning("مفيش طلبات بوفيه في الفترة دي")
 
-                    # ==================== عرض الـ IT ====================
                     elif view_mode == "💻 تحليلات الـ IT":
                         it_df = final_df[final_df['type'] == "IT"]
-                        
                         if not it_df.empty:
-                            # 1. كروت الأرقام
                             c1, c2, c3 = st.columns(3)
                             c1.metric("إجمالي البلاغات", len(it_df))
                             c2.metric("أكثر مشكلة تكراراً", it_df['item'].mode()[0] if not it_df.empty else "-")
                             c3.metric("أكثر مكتب عنده مشاكل", it_df['user_room'].mode()[0] if not it_df.empty else "-")
-                            
                             st.divider()
 
-                            # 2. تحليل المشاكل (Top Issues) - طلبك الأول
                             st.subheader("🔧 المشاكل الأكثر شيوعاً")
                             top_issues = it_df['item'].value_counts().reset_index()
                             top_issues.columns = ['المشكلة', 'التكرار']
@@ -269,10 +253,8 @@ if user:
                             with c_tb:
                                 st.write("🔢 بالأرقام:")
                                 st.dataframe(top_issues, hide_index=True, use_container_width=True)
-                            
                             st.divider()
 
-                            # 3. تحليل الأشخاص والغرف
                             st.subheader("🏢 مصدر البلاغات")
                             c_p1, c_p2 = st.columns(2)
                             with c_p1:
@@ -281,10 +263,8 @@ if user:
                             with c_p2:
                                 fig_users_it = px.bar(it_df['user_name'].value_counts().reset_index(), x='user_name', y='count', title="الموظفين الأكثر تبليغاً")
                                 st.plotly_chart(fig_users_it, use_container_width=True)
-
                         else:
                             st.warning("مفيش بلاغات IT في الفترة دي")
-
                 else:
                     st.warning("مفيش بيانات للفترة دي")
             else:
@@ -319,7 +299,6 @@ if user:
                 c3, c4 = st.columns(2)
                 pwd = c3.text_input("باسورد", type="password")
                 
-                # اختيار الروم
                 available_rooms = [r['name'] for r in db.rooms.find()]
                 if not available_rooms: available_rooms = ["General"]
                 room = c4.selectbox("المكتب / التيم", available_rooms)
@@ -346,11 +325,15 @@ if user:
                     db.users.delete_one({"_id": u['_id']})
                     st.rerun()
 
-        # 4. مراقبة الطلبات
+        # 4. مراقبة الطلبات (تم تعديلها لإظهار الوقت)
         with admin_tabs[3]:
             if st.button("تحديث القائمة"): st.rerun()
-            for t in db.tickets.find({"status": "New"}):
-                st.warning(f"{t['type']} | {t['user_name']} | {t['item']}")
+            tickets = list(db.tickets.find({"status": "New"}))
+            if not tickets:
+                st.success("الجو رايق.. مفيش طلبات معلقة.")
+            for t in tickets:
+                # عرض الوقت + التفاصيل
+                st.warning(f"🕒 {t['timestamp']} | {t['type']} | {t['user_name']} ({t['user_room']}) : {t['item']}")
 
     # ---------------------------------------------------------
     # السيناريو الثاني: الموظف
