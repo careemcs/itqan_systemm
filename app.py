@@ -18,7 +18,7 @@ def init_connection():
 client = init_connection()
 db = client.itqan_db
 
-# --- تهيئة المنيو ---
+# --- تهيئة المنيو (Upsert لمنع التكرار) ---
 def init_menu():
     default_drinks = ["قهوة", "شاي", "نسكافيه", "مياه", "ينسون", "نعناع", "كركديه"]
     for d in default_drinks:
@@ -87,28 +87,26 @@ def login():
 user = login()
 
 if user:
-    # القائمة الجانبية (معلومات المستخدم)
+    # القائمة الجانبية
     st.sidebar.divider()
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
-    # 🔴🔴 زرار التحديث (الحل السحري) 🔴🔴
-    # الزرار ده موجود لكل الناس في القائمة الجانبية
-    # لما تدوس عليه بيعمل ريفريش للداتا من غير ما يخرجك
+    # زرار التحديث للكل
     if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
         st.rerun()
 
-    # === إدارة المنيو (للأدمن والأوفيس بوي) ===
-    if user['role'] in ["Admin", "Office Boy"]:
-        with st.sidebar.expander("☕ إدارة المنيو", expanded=False):
-            if user['role'] == "Admin":
-                if st.button("🗑️ إعادة ضبط المنيو", help="مسح التكرار"):
-                    db.menu.delete_many({})
-                    init_menu()
-                    st.toast("تم التنظيف!")
-                    time.sleep(1)
-                    st.rerun()
-                st.divider()
+    # === إدارة المنيو (للأدمن فـقـط) ===
+    # التعديل هنا: شيلنا Office Boy من الشرط
+    if user['role'] == "Admin":
+        with st.sidebar.expander("☕ إدارة المنيو (أدمن)", expanded=False):
+            if st.button("🗑️ تنظيف التكرار", help="مسح وإعادة ضبط"):
+                db.menu.delete_many({})
+                init_menu()
+                st.toast("تم التنظيف!")
+                time.sleep(1)
+                st.rerun()
+            st.divider()
 
             st.write("المتاح حالياً:")
             menu_items = list(db.menu.find())
@@ -119,15 +117,14 @@ if user:
                     toggle_stock(item_id, is_available)
                     st.rerun()
             
-            if user['role'] == "Admin":
-                st.divider()
-                new_drink = st.text_input("صنف جديد")
-                if st.button("إضافة"):
-                    if new_drink:
-                        clean_name = new_drink.strip()
-                        if not db.menu.find_one({"name": clean_name}):
-                            db.menu.insert_one({"name": clean_name, "available": True})
-                            st.rerun()
+            st.divider()
+            new_drink = st.text_input("صنف جديد")
+            if st.button("إضافة"):
+                if new_drink:
+                    clean_name = new_drink.strip()
+                    if not db.menu.find_one({"name": clean_name}):
+                        db.menu.insert_one({"name": clean_name, "available": True})
+                        st.rerun()
 
     # زرار الخروج
     st.sidebar.divider()
@@ -142,85 +139,107 @@ if user:
     # ---------------------------------------------------------
     if user['role'] == "Admin":
         st.title("📊 لوحة المدير")
-        admin_tabs = st.tabs(["📈 التحليلات والتقارير", "📝 طلب خاص", "👥 الموظفين", "👀 مراقبة"])
+        admin_tabs = st.tabs(["📈 التحليلات", "📝 طلب خاص", "👥 الموظفين", "👀 مراقبة"])
         
-        # 1. التحليلات
+        # 1. التحليلات (شهرية + يومية)
         with admin_tabs[0]:
             all_data = list(db.tickets.find())
             
             if all_data:
                 df = pd.DataFrame(all_data)
                 
-                st.subheader("📅 فلترة التقارير")
-                col_filter1, col_filter2 = st.columns(2)
-                
+                # تجهيز التواريخ
+                df['datetime'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 if 'month_year' not in df.columns:
-                    df['month_year'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m')
+                    df['month_year'] = df['datetime'].dt.strftime('%Y-%m')
                 
-                available_months = sorted(df['month_year'].unique(), reverse=True)
-                selected_month = col_filter1.selectbox("اختر الشهر للعرض:", available_months)
+                st.subheader("📅 فلترة التقارير")
+                col_m, col_d = st.columns(2)
                 
-                filtered_df = df[df['month_year'] == selected_month]
+                # 1. اختيار الشهر
+                unique_months = sorted([m for m in df['month_year'].dropna().unique() if isinstance(m, str)], reverse=True)
+                selected_month = col_m.selectbox("1️⃣ اختر الشهر:", unique_months)
                 
-                if not filtered_df.empty:
+                # فلترة مبدئية بالشهر
+                month_df = df[df['month_year'] == selected_month]
+                
+                # 2. اختيار اليوم (اختياري)
+                available_days = sorted(month_df['date_only'].unique())
+                # بنضيف خيار "الكل" في الأول
+                day_options = ["الكل (عرض الشهر كامل)"] + list(available_days)
+                selected_day = col_d.selectbox("2️⃣ اختر اليوم (اختياري):", day_options)
+                
+                # الفلترة النهائية
+                if selected_day != "الكل (عرض الشهر كامل)":
+                    final_df = month_df[month_df['date_only'] == selected_day]
+                    report_title = f"تقرير يوم {selected_day}"
+                else:
+                    final_df = month_df
+                    report_title = f"تقرير شهر {selected_month}"
+                
+                if not final_df.empty:
+                    st.divider()
+                    st.markdown(f"### 📊 نتائج: {report_title}")
+                    
                     c1, c2, c3 = st.columns(3)
-                    c1.metric(f"طلبات {selected_month}", len(filtered_df))
-                    c2.metric("بوفيه", len(filtered_df[filtered_df['type'] == "Office"]))
-                    c3.metric("دعم فني", len(filtered_df[filtered_df['type'] == "IT"]))
+                    c1.metric("إجمالي الطلبات", len(final_df))
+                    c2.metric("بوفيه", len(final_df[final_df['type'] == "Office"]))
+                    c3.metric("دعم فني", len(final_df[final_df['type'] == "IT"]))
                     
                     st.divider()
                     
                     c_off, c_it = st.columns(2)
                     with c_off:
-                        st.caption("☕ بوفيه (الشهر ده)")
-                        off_df = filtered_df[filtered_df['type'] == "Office"]
+                        st.caption("☕ بوفيه")
+                        off_df = final_df[final_df['type'] == "Office"]
                         if not off_df.empty:
                             off_df['item_clean'] = off_df['item'].apply(lambda x: x.split('-')[0].strip())
-                            fig = px.pie(off_df, names='item_clean', title='المشروبات')
+                            fig = px.pie(off_df, names='item_clean', title='توزيع المشروبات')
                             fig.update_traces(textinfo='value+percent')
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info("مفيش بوفيه الشهر ده")
+                            st.info("مفيش بوفيه في الفترة دي")
 
                     with c_it:
-                        st.caption("💻 دعم فني (الشهر ده)")
-                        it_df = filtered_df[filtered_df['type'] == "IT"]
+                        st.caption("💻 دعم فني")
+                        it_df = final_df[final_df['type'] == "IT"]
                         if not it_df.empty:
                             fig_it = px.bar(it_df['item'].value_counts().reset_index(), x='item', y='count', title='المشاكل')
                             st.plotly_chart(fig_it, use_container_width=True)
                         else:
-                            st.info("مفيش IT الشهر ده")
+                            st.info("مفيش IT في الفترة دي")
 
                     st.divider()
                     
-                    st.subheader("⚙️ إدارة بيانات الشهر")
+                    # التحميل والحذف
+                    st.subheader("⚙️ إدارة البيانات")
                     col_act1, col_act2 = st.columns(2)
                     
                     with col_act1:
-                        csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
+                        csv = final_df.to_csv(index=False).encode('utf-8-sig')
                         st.download_button(
-                            label=f"📥 تحميل تقرير {selected_month} (Excel)",
+                            label=f"📥 تحميل {report_title} (Excel)",
                             data=csv,
                             file_name=f"report_{selected_month}.csv",
                             mime="text/csv",
                         )
                     
                     with col_act2:
-                        with st.expander("🗑️ منطقة الخطر (حذف البيانات)"):
-                            st.warning(f"تحذير: هتمسح كل بيانات شهر {selected_month} نهائياً!")
-                            confirm_delete = st.checkbox(f"أنا متأكد، امسح بيانات {selected_month}")
-                            if st.button("تأكيد الحذف النهائي 🧨", disabled=not confirm_delete):
+                        # الحذف متاح للشهر بالكامل فقط (للأمان)
+                        with st.expander(f"🗑️ حذف بيانات شهر {selected_month} بالكامل"):
+                            st.warning("تحذير: الحذف هنا بيشيل الشهر كله مش اليوم بس!")
+                            confirm_delete = st.checkbox("أنا متأكد، امسح الشهر كله")
+                            if st.button("تأكيد الحذف 🧨", disabled=not confirm_delete):
                                 db.tickets.delete_many({"month_year": selected_month})
-                                st.success(f"تم مسح بيانات {selected_month} بالسلامة!")
+                                st.success("تم الحذف!")
                                 time.sleep(2)
                                 st.rerun()
-
                 else:
-                    st.warning("مفيش بيانات في الشهر ده")
+                    st.warning("مفيش بيانات للفترة دي")
             else:
-                st.info("السيستم لسه فاضي تماماً")
+                st.info("السيستم فاضي")
 
-        # 2. الأدمن يطلب
+        # 2. طلب للأدمن
         with admin_tabs[1]:
             type_ = st.radio("نوع الطلب", ["بوفيه", "IT"], horizontal=True)
             if type_ == "بوفيه":
@@ -272,7 +291,6 @@ if user:
 
         # 4. مراقبة الطلبات
         with admin_tabs[3]:
-            # زرار تحديث داخلي للتاب دي كمان
             if st.button("تحديث القائمة"): st.rerun()
             for t in db.tickets.find({"status": "New"}):
                 st.warning(f"{t['type']} | {t['user_name']} | {t['item']}")
