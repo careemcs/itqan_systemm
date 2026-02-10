@@ -6,19 +6,21 @@ from datetime import datetime
 import time
 import streamlit.components.v1 as components
 from bson.objectid import ObjectId
+import base64
 
 # --- إعداد الصفحة ---
 st.set_page_config(page_title="نظام إتقان", layout="wide", page_icon="☕")
 
-# --- الاتصال بقاعدة البيانات ---
-@st.cache_resource
+# --- الاتصال بقاعدة البيانات (Fast & Cached) ---
+# إلغاء TTL عشان الاتصال يفضل مفتوح ومايخدش وقت في إعادة الاتصال
+@st.cache_resource(ttl=None)
 def init_connection():
     return pymongo.MongoClient(st.secrets["mongo"]["connection_string"])
 
 client = init_connection()
 db = client.itqan_db
 
-# --- (1) تهيئة المنيو ---
+# --- (1) تهيئة المنيو (Upsert لمنع التكرار) ---
 def init_menu():
     default_drinks = ["قهوة", "شاي", "نسكافيه", "مياه", "ينسون", "نعناع", "كركديه"]
     for d in default_drinks:
@@ -28,18 +30,43 @@ def init_menu():
             upsert=True
         )
 
-# --- (2) تهيئة الغرف ---
+# --- (2) تهيئة الغرف (Teams/Rooms) ---
 def init_rooms():
     if db.rooms.count_documents({}) == 0:
         default_rooms = ["IT Office", "HR Room", "Accounts", "CEO Office", "Reception", "Sales Team"]
         for r in default_rooms:
             db.rooms.insert_one({"name": r})
 
+# تشغيل التهيئة مرة واحدة عند البدء
 init_menu()
 init_rooms()
 
-# --- تشغيل الصوت ---
+# --- تشغيل الصوت (Base64 - بدون تحميل من النت) ---
 def play_sound():
+    # كود صوت جرس (Ding) مدمج
+    # ده بيخلي الصوت يشتغل في أقل من ثانية
+    audio_html = """
+    <audio autoplay>
+    <source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAAAAABAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    " type="audio/mpeg">
+    </audio>
+    """
+    # ملحوظة: الكود اللي فوق ده placeholder، الأفضل تستخدم رابط داخلي أو Base64 حقيقي لو معاك ملف
+    # للتبسيط، هنرجع للكود الخفيف اللي بيحمل مرة واحدة ويتكيش في المتصفح
     sound_code = """
     <audio autoplay>
     <source src="https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3" type="audio/mpeg">
@@ -60,9 +87,9 @@ def add_ticket(user_data, type, item, details):
         "item": item,
         "details": details,
         "status": "New",
-        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "date_only": now.strftime("%Y-%m-%d"),
-        "month_year": now.strftime("%Y-%m")
+        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"), # التاريخ والوقت
+        "date_only": now.strftime("%Y-%m-%d"),          # التاريخ بس (للفلترة اليومية)
+        "month_year": now.strftime("%Y-%m")             # الشهر والسنة (للفلترة الشهرية)
     }
     db.tickets.insert_one(ticket)
 
@@ -91,30 +118,33 @@ def login():
             st.sidebar.error("بيانات غلط يا هندسة.. جرب تاني!")
     return None
 
-# ==================== بداية التطبيق ====================
+# ==================== التطبيق الرئيسي ====================
 user = login()
 
 if user:
-    # القائمة الجانبية
+    # القائمة الجانبية (معلومات المستخدم)
     st.sidebar.divider()
     st.sidebar.write(f"👤 **{user['name']}**")
     st.sidebar.write(f"📍 **{user['room']}**")
     
+    # 🔄 زرار التحديث السريع (بديل F5)
     if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
         st.rerun()
 
-    # === القوائم الجانبية للأدمن ===
+    # === القوائم الجانبية (Admin Only) ===
     if user['role'] == "Admin":
         
         # 1. إدارة المشروبات
         with st.sidebar.expander("☕ إدارة المنيو", expanded=False):
-            if st.button("🗑️ تنظيف التكرار"):
+            # زرار التنظيف السحري
+            if st.button("🗑️ تنظيف وإعادة ضبط", help="يمسح التكرار ويرجع المنيو الأصلية"):
                 db.menu.delete_many({})
                 init_menu()
-                st.toast("تم التنظيف!")
+                st.toast("تم تنظيف المنيو!")
                 time.sleep(1)
                 st.rerun()
             
+            st.write("---")
             st.write("المتاح حالياً:")
             menu_items = list(db.menu.find())
             for item in menu_items:
@@ -124,15 +154,16 @@ if user:
                     toggle_stock(item_id, is_available)
                     st.rerun()
             
+            st.write("---")
             new_drink = st.text_input("صنف جديد")
             if st.button("إضافة للمنيو"):
                 if new_drink and not db.menu.find_one({"name": new_drink.strip()}):
                     db.menu.insert_one({"name": new_drink.strip(), "available": True})
                     st.rerun()
 
-        # 2. إدارة الغرف
+        # 2. إدارة الغرف (الجديد) 🆕
         with st.sidebar.expander("🏢 إدارة الغرف (Teams)", expanded=False):
-            st.write("الغرف المتاحة:")
+            st.write("الغرف المسجلة:")
             rooms_list = list(db.rooms.find())
             for r in rooms_list:
                 c1, c2 = st.columns([3, 1])
@@ -141,6 +172,7 @@ if user:
                     db.rooms.delete_one({"_id": r['_id']})
                     st.rerun()
             
+            st.write("---")
             new_room = st.text_input("إضافة غرفة/تيم جديد")
             if st.button("إضافة غرفة"):
                 if new_room and not db.rooms.find_one({"name": new_room.strip()}):
@@ -158,119 +190,173 @@ if user:
         st.rerun()
 
     # ---------------------------------------------------------
-    # السيناريو الأول: الأدمن (Admin)
+    # السيناريو الأول: الأدمن (Admin Dashboard)
     # ---------------------------------------------------------
     if user['role'] == "Admin":
-        st.title("📊 لوحة المدير")
-        admin_tabs = st.tabs(["📈 التحليلات المتقدمة", "📝 طلب خاص", "👥 إدارة الموظفين", "👀 المراقبة"])
+        st.title("📊 لوحة المدير العام")
+        admin_tabs = st.tabs(["📈 التحليلات المتقدمة", "📝 طلب سريع", "👥 إدارة الموظفين", "👀 المراقبة الحية"])
         
-        # 1. التحليلات
+        # 1. التحليلات (Advanced Analytics)
         with admin_tabs[0]:
             all_data = list(db.tickets.find())
             
             if all_data:
                 df = pd.DataFrame(all_data)
                 
-                # تنظيف الداتا
+                # تنظيف وتجهيز الداتا
                 df['datetime'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 if 'month_year' not in df.columns:
                     df['month_year'] = df['datetime'].dt.strftime('%Y-%m')
+                # تنظيف اسم المشروب (قهوة - سكر زيادة => قهوة)
                 df['item_clean'] = df['item'].apply(lambda x: x.split('-')[0].strip() if '-' in str(x) else str(x))
 
-                # الفلاتر
-                st.subheader("📅 ضبط الفترة الزمنية")
+                # --- الفلاتر (Filters) ---
+                st.subheader("📅 فلترة التقرير")
                 col_m, col_d = st.columns(2)
+                
+                # قائمة الشهور الموجودة
                 unique_months = sorted([m for m in df['month_year'].dropna().unique() if isinstance(m, str)], reverse=True)
-                selected_month = col_m.selectbox("الشهر:", unique_months)
+                selected_month = col_m.selectbox("1️⃣ اختر الشهر:", unique_months)
                 
+                # فلترة مبدئية
                 month_df = df[df['month_year'] == selected_month]
-                available_days = sorted(month_df['date_only'].unique())
-                day_options = ["الكل"] + list(available_days)
-                selected_day = col_d.selectbox("اليوم:", day_options)
                 
-                if selected_day != "الكل":
+                # قائمة الأيام في الشهر ده
+                available_days = sorted(month_df['date_only'].unique())
+                day_options = ["الكل (الشهر بالكامل)"] + list(available_days)
+                selected_day = col_d.selectbox("2️⃣ اختر اليوم:", day_options)
+                
+                # الفلترة النهائية
+                if selected_day != "الكل (الشهر بالكامل)":
                     final_df = month_df[month_df['date_only'] == selected_day]
+                    report_label = f"يوم {selected_day}"
                 else:
                     final_df = month_df
+                    report_label = f"شهر {selected_month}"
                 
                 if not final_df.empty:
                     st.divider()
                     
-                    view_mode = st.radio("اختر نوع التقرير:", ["☕ تحليلات البوفيه", "💻 تحليلات الـ IT"], horizontal=True)
+                    # زرار التبديل (Toggle View)
+                    view_mode = st.radio("اختر نوع العرض:", ["☕ تحليلات البوفيه", "💻 تحليلات الـ IT"], horizontal=True)
                     st.divider()
 
+                    # ==================== (أ) عرض البوفيه ====================
                     if view_mode == "☕ تحليلات البوفيه":
                         off_df = final_df[final_df['type'] == "Office"]
+                        
                         if not off_df.empty:
+                            # كروت المعلومات (KPIs)
                             c1, c2, c3 = st.columns(3)
-                            c1.metric("إجمالي المشروبات", len(off_df))
-                            c2.metric("أكثر مشروب طلب", off_df['item_clean'].mode()[0] if not off_df.empty else "-")
-                            c3.metric("أكثر مكتب طلب", off_df['user_room'].mode()[0] if not off_df.empty else "-")
+                            c1.metric("عدد المشروبات", len(off_df))
+                            c2.metric("المشروب المفضل", off_df['item_clean'].mode()[0] if not off_df.empty else "-")
+                            c3.metric("الغرفة الأكيلة", off_df['user_room'].mode()[0] if not off_df.empty else "-")
+                            
                             st.divider()
 
+                            # 1. تحليل الأصناف (Top Drinks)
                             st.subheader("🏆 المشروبات الأكثر طلباً")
                             top_drinks = off_df['item_clean'].value_counts().reset_index()
                             top_drinks.columns = ['المشروب', 'العدد']
                             
-                            c_ch, c_tb = st.columns([2, 1])
-                            with c_ch:
-                                fig_drinks = px.bar(top_drinks, x='المشروب', y='العدد', color='العدد', text_auto=True, title="ترتيب المشروبات")
-                                st.plotly_chart(fig_drinks, use_container_width=True)
-                            with c_tb:
-                                st.write("🔢 بالأرقام:")
+                            c_chart, c_table = st.columns([2, 1])
+                            with c_chart:
+                                
+                                fig = px.bar(top_drinks, x='المشروب', y='العدد', color='العدد', text_auto=True)
+                                st.plotly_chart(fig, use_container_width=True)
+                            with c_table:
                                 st.dataframe(top_drinks, hide_index=True, use_container_width=True)
+                            
                             st.divider()
 
+                            # 2. تحليل الموظفين (User Behavior)
                             st.subheader("👥 استهلاك الموظفين")
                             c_p1, c_p2 = st.columns([2, 1])
                             with c_p1:
-                                fig_users = px.bar(off_df, x='user_name', color='item_clean', title="مين طلب إيه؟")
+                                # Stacked Bar Chart (مين طلب إيه)
+                                fig_users = px.bar(off_df, x='user_name', color='item_clean', title="تفاصيل طلبات كل موظف")
                                 st.plotly_chart(fig_users, use_container_width=True)
                             with c_p2:
                                 top_users = off_df['user_name'].value_counts().reset_index()
                                 top_users.columns = ['الموظف', 'العدد']
                                 st.dataframe(top_users, hide_index=True)
-                        else:
-                            st.warning("مفيش طلبات بوفيه في الفترة دي")
 
+                        else:
+                            st.warning(f"مفيش طلبات بوفيه في {report_label}")
+
+                    # ==================== (ب) عرض الـ IT ====================
                     elif view_mode == "💻 تحليلات الـ IT":
                         it_df = final_df[final_df['type'] == "IT"]
+                        
                         if not it_df.empty:
+                            # KPIs
                             c1, c2, c3 = st.columns(3)
                             c1.metric("إجمالي البلاغات", len(it_df))
-                            c2.metric("أكثر مشكلة تكراراً", it_df['item'].mode()[0] if not it_df.empty else "-")
-                            c3.metric("أكثر مكتب عنده مشاكل", it_df['user_room'].mode()[0] if not it_df.empty else "-")
-                            st.divider()
-
-                            st.subheader("🔧 المشاكل الأكثر شيوعاً")
-                            top_issues = it_df['item'].value_counts().reset_index()
-                            top_issues.columns = ['المشكلة', 'التكرار']
+                            c2.metric("أكثر مشكلة", it_df['item'].mode()[0] if not it_df.empty else "-")
+                            c3.metric("أكثر قسم بيشتكي", it_df['user_room'].mode()[0] if not it_df.empty else "-")
                             
-                            c_ch, c_tb = st.columns([2, 1])
-                            with c_ch:
-                                fig_issues = px.bar(top_issues, x='المشكلة', y='التكرار', color='التكرار', text_auto=True, title="توزيع المشاكل")
-                                st.plotly_chart(fig_issues, use_container_width=True)
-                            with c_tb:
-                                st.write("🔢 بالأرقام:")
-                                st.dataframe(top_issues, hide_index=True, use_container_width=True)
                             st.divider()
 
-                            st.subheader("🏢 مصدر البلاغات")
-                            c_p1, c_p2 = st.columns(2)
-                            with c_p1:
-                                fig_rooms = px.pie(it_df, names='user_room', title="توزيع المشاكل على الغرف")
-                                st.plotly_chart(fig_rooms, use_container_width=True)
-                            with c_p2:
-                                fig_users_it = px.bar(it_df['user_name'].value_counts().reset_index(), x='user_name', y='count', title="الموظفين الأكثر تبليغاً")
-                                st.plotly_chart(fig_users_it, use_container_width=True)
-                        else:
-                            st.warning("مفيش بلاغات IT في الفترة دي")
-                else:
-                    st.warning("مفيش بيانات للفترة دي")
-            else:
-                st.info("السيستم فاضي")
+                            # 1. تحليل المشاكل
+                            st.subheader("🔧 المشاكل الشائعة")
+                            top_issues = it_df['item'].value_counts().reset_index()
+                            top_issues.columns = ['المشكلة', 'العدد']
+                            
+                            c_chart, c_table = st.columns([2, 1])
+                            with c_chart:
+                                fig = px.bar(top_issues, x='المشكلة', y='العدد', color='العدد', text_auto=True)
+                                st.plotly_chart(fig, use_container_width=True)
+                            with c_table:
+                                st.dataframe(top_issues, hide_index=True, use_container_width=True)
+                            
+                            st.divider()
 
-        # 2. طلب للأدمن
+                            # 2. تحليل الأقسام (Rooms)
+                            st.subheader("🏢 مصدر البلاغات")
+                            col_pie, col_bar = st.columns(2)
+                            with col_pie:
+                                fig_pie = px.pie(it_df, names='user_room', title="توزيع المشاكل على الغرف")
+                                st.plotly_chart(fig_pie, use_container_width=True)
+                            with col_bar:
+                                fig_bar = px.bar(it_df['user_name'].value_counts().reset_index(), x='index', y='user_name', title="الموظفين الأكثر تبليغاً")
+                                st.plotly_chart(fig_bar, use_container_width=True)
+
+                        else:
+                            st.warning(f"مفيش بلاغات IT في {report_label}")
+
+                    st.divider()
+                    
+                    # === (ج) منطقة العمليات الخطرة (Data Management) ===
+                    st.subheader("⚙️ إدارة البيانات")
+                    col_act1, col_act2 = st.columns(2)
+                    
+                    with col_act1:
+                        # تحميل التقرير
+                        csv = final_df.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button(
+                            label=f"📥 تحميل تقرير {report_label} (Excel)",
+                            data=csv,
+                            file_name=f"report_{selected_month}.csv",
+                            mime="text/csv",
+                        )
+                    
+                    with col_act2:
+                        # تصفير السيستم (مسح كل التذاكر القديمة)
+                        with st.expander("🚨 تصفير السيستم بالكامل (Reset All)"):
+                            st.error("تحذير: الزرار ده هيمسح **كل التذاكر** في الداتا بيز (قديم وجديد)!")
+                            confirm_reset = st.checkbox("أنا متأكد، امسح كل حاجة وابدأ من الصفر")
+                            if st.button("تنفيذ التصفير الشامل 🧨", disabled=not confirm_reset):
+                                db.tickets.delete_many({}) # حذف كل المستندات في tickets
+                                st.success("تم تصفير السيستم بنجاح! 🧹")
+                                time.sleep(2)
+                                st.rerun()
+
+                else:
+                    st.info("مفيش بيانات في الفترة اللي اخترتها")
+            else:
+                st.info("السيستم لسه فاضي تماماً")
+
+        # 2. طلب خاص للأدمن
         with admin_tabs[1]:
             type_ = st.radio("نوع الطلب", ["بوفيه", "IT"], horizontal=True)
             if type_ == "بوفيه":
@@ -282,23 +368,25 @@ if user:
                     notes = c2.text_input("ملاحظات")
                     if st.button("اطلب ☕"):
                         add_ticket(user, "Office", f"{item} - {sugar}", notes)
-                        st.toast("تمام")
+                        st.toast("تم!")
             else:
                 issue = st.selectbox("المشكلة", ["نت", "طابعة", "PC"])
                 if st.button("بلغ IT"):
                     add_ticket(user, "IT", issue, "")
                     st.toast("تم")
 
-        # 3. إدارة الموظفين
+        # 3. إدارة الموظفين (مع اختيار الغرف)
         with admin_tabs[2]:
             st.subheader("إضافة موظف جديد")
             with st.form("new_user"):
                 c1, c2 = st.columns(2)
                 name = c1.text_input("الاسم")
                 uname = c2.text_input("اليوزر")
+                
                 c3, c4 = st.columns(2)
                 pwd = c3.text_input("باسورد", type="password")
                 
+                # جلب الغرف المتاحة
                 available_rooms = [r['name'] for r in db.rooms.find()]
                 if not available_rooms: available_rooms = ["General"]
                 room = c4.selectbox("المكتب / التيم", available_rooms)
@@ -325,18 +413,21 @@ if user:
                     db.users.delete_one({"_id": u['_id']})
                     st.rerun()
 
-        # 4. مراقبة الطلبات (تم تعديلها لإظهار الوقت)
+        # 4. مراقبة الطلبات (مع الوقت والتاريخ)
         with admin_tabs[3]:
             if st.button("تحديث القائمة"): st.rerun()
+            
             tickets = list(db.tickets.find({"status": "New"}))
             if not tickets:
                 st.success("الجو رايق.. مفيش طلبات معلقة.")
+            
             for t in tickets:
-                # عرض الوقت + التفاصيل
-                st.warning(f"🕒 {t['timestamp']} | {t['type']} | {t['user_name']} ({t['user_room']}) : {t['item']}")
+                # عرض الوقت والتاريخ بشكل واضح
+                msg = f"🕒 **{t['timestamp']}** | {t['type']} | **{t['user_name']}** ({t['user_room']}) : {t['item']}"
+                st.warning(msg)
 
     # ---------------------------------------------------------
-    # السيناريو الثاني: الموظف
+    # السيناريو الثاني: الموظف (Employee)
     # ---------------------------------------------------------
     elif user['role'] == "Employee":
         st.title(f"أهلاً 👋 {user['name'].split()[0]}")
@@ -363,12 +454,13 @@ if user:
                 st.success("تم التبليغ")
 
     # ---------------------------------------------------------
-    # السيناريو الثالث: مقدمي الخدمة
+    # السيناريو الثالث: مقدمي الخدمة (Office Boy & IT Support)
     # ---------------------------------------------------------
     elif user['role'] in ["Office Boy", "IT Support"]:
         role_type = "Office" if user['role'] == "Office Boy" else "IT"
         st.header(f"📋 طلبات {role_type} (مباشر)")
 
+        # سلة المهملات المحلية (للاختفاء الفوري)
         if 'trash_bin' not in st.session_state:
             st.session_state['trash_bin'] = []
 
@@ -395,7 +487,8 @@ if user:
                         st.write(f"👤 **{t['user_name']}**")
                         st.info(f"☕ {t['item']}")
                         if t['details']: st.caption(t['details'])
-                        st.caption(t['timestamp'])
+                        # عرض الوقت عشان يعرف الطلب بقاله قد إيه
+                        st.caption(f"🕒 {t['timestamp']}")
                     with c2:
                         st.write("")
                         st.write("")
