@@ -370,7 +370,7 @@ if user:
                         add_ticket(user, "Office", f"{item} - {sugar}", notes)
                         st.toast("تم!")
             else:
-                issue = st.selectbox("المشكلة", [نت", "أخرى", "PC"])
+                issue = st.selectbox("المشكلة", ["نت", "أخرى", "PC"])
                 if st.button("بلغ IT"):
                     add_ticket(user, "IT", issue, "")
                     st.toast("تم")
@@ -504,4 +504,5 @@ if user:
 
 else:
     st.info("سجل دخول")
+
 
