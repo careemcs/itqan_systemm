@@ -370,7 +370,7 @@ if user:
                         add_ticket(user, "Office", f"{item} - {sugar}", notes)
                         st.toast("تم!")
             else:
-                issue = st.selectbox("المشكلة", ["نت", "طابعة", "PC"])
+                issue = st.selectbox("المشكلة", [نت", "أخرى", "PC"])
                 if st.button("بلغ IT"):
                     add_ticket(user, "IT", issue, "")
                     st.toast("تم")
@@ -447,7 +447,7 @@ if user:
                 st.error("البوفيه مغلق")
 
         with tabs[1]:
-            issue = st.selectbox("المشكلة", ["نت", "طابعة", "PC", "برامج"])
+            issue = st.selectbox("المشكلة", ["نت", "أخرى", "PC", "برامج"])
             desc = st.text_area("وصف")
             if st.button("بلغ IT 🛠️", use_container_width=True):
                 add_ticket(user, "IT", issue, desc)
@@ -504,3 +504,4 @@ if user:
 
 else:
     st.info("سجل دخول")
+
